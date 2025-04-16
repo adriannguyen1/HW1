@@ -9,8 +9,9 @@
 
 #define CMDLINE_MAX 512
 
-int input = 1;
-int output = 2;
+enum ERRTYPE {
+    NONE, NOIN, CANTIN, NOOUT, CANTOUT
+}
 
 //Struct Object
 struct cmdline { //we're making a struct just like in hw1 instructions. It's gonna have an array to hold pointers to arguments
@@ -18,8 +19,23 @@ struct cmdline { //we're making a struct just like in hw1 instructions. It's gon
     char *arguments[256]; //we want an array of argument pointers the max number of arguments would be 256 (we got like 512 chars max so one char and one space per argument.)
 };
 
-//Function to parse
-int parserfunction(struct cmdline *mycmd, char *cmdline) {
+// Fills processes with the processes from cmdline that were separated by pipes, returns number of processes
+int pipefunction(char *cmdline, char processes[][CMDLINE_MAX]) {
+    char *token = strtok(cmdline, "|");
+
+    int i = 0;
+    while (token != NULL) {
+        strcpy(processes[i], token);
+        token = strtok(NULL, "|");
+        
+        i++;
+    }
+
+    return i;
+}
+
+// Parse command, sets file descriptors as necessary
+int parserfunction(struct cmdline *mycmd, char *cmdline, int *input, int *output, ERRTYPE *error) {
     char* token;
 
     token = strtok(cmdline, " \t");
@@ -28,12 +44,49 @@ int parserfunction(struct cmdline *mycmd, char *cmdline) {
             mycmd->arguments[i] = token;
             token = strtok(NULL, " \t");
             
-            if (strtok(token, "<") != NULL)
-            {
-                input = open();
+            char input_check[CMDLINE_MAX];
+            char output_check[CMDLINE_MAX];
+            strcpy(input_check, token);
+            strcpy(output_check, token);
+            if (strtok(input_check, "<") != NULL) {
+                char *file = strtok(NULL, " \t");
+                while (file[0] == ' ' || file[0] == '\t')
+                    ++file;
+
+                // No file passed in
+                if (!strcmp(file, "")) {
+                    *error = NOIN;
+                    return -1;
+                }
+
+                *input = open(file, O_RDONLY);
+
+                // Cannot open file
+                if (*input == -1) {
+                    *error = CANTIN;
+                    return -1;
+                }
+            } else if (strtok(output_check, ">") != NULL) {
+                char *file = strtok(NULL, " \t");
+                while (file[0] == ' ' || file[0] == '\t')
+                    ++file;
+
+                // No file passed in
+                if (!strcmp(file, "")) {
+                    *error = NOOUT;
+                    return -1;
+                }
+
+                *output = open(file, O_WRONLY);
+                
+                // Cannot open file
+                if (*output == -1) {
+                    *error = CANTOUT;
+                    return -1;
+                }
             }
             
-            i++;
+            argumentNum++;
     }
     mycmd->arguments[i] = NULL; //NULL terminate it. mark the end.
 
@@ -48,12 +101,10 @@ int main(void)
     pid_t pid;
 
     while (1) {
-	    //char *args[CMDLINE_MAX];
         char *nl;
-        //int retval;
 
         /* Print prompt */
-        printf("sshell$ ");
+        printf("sshell@ucd$ ");
         fflush(stdout);
 
         /* Get command line */
@@ -80,22 +131,55 @@ int main(void)
         struct cmdline *cmdptr = &ourcmd;
 
         char cmdCOPY[CMDLINE_MAX];
+        char cmdCOPY1[CMDLINE_MAX];
         strcpy(cmdCOPY, cmd); //gotta make a copy of cmd for printing out later, because cmd may be parsed
 
+        char processes[CMDLINE_MAX][CMDLINE_MAX];
+        int input = 1;
+        int output = 2;
 
-        int processNum = parserfunction(cmdptr, cmd);
-        //call paserfunction!
-        //processNum can now be used instead of original argi
+        int processNum = pipefunction(cmdCOPY1, processes);
+
+        int argumentNums[CMDLINE_MAX];
+        for (int i = 0; i < processNum; ++i) {
+            ERRTYPE error = NONE;
+            argumentNum[i] = parserfunction(cmdptr, cmd, &input, &output, &error);
+
+            switch (error) {
+                case NOIN:
+                    fprintf(stderr, "Error: no input file\n");
+                    continue;
+                case NOOUT:
+                    fprintf(stderr, "Error: no output file\n");
+                    continue;
+                case CANTIN:
+                    fprintf(stderr, "Error: cannot open input file\n");
+                    continue;
+                case CANTOUT:
+                    fprintf(stderr, "Error: cannot open output file\n");
+                    continue;
+            }
+
+            // Redirection during piping, bad
+            if (input != 1 && i != 0) {
+                fprintf(stderr, "Error: mislocated input redirection\n");
+                continue;
+            } else if (output != 2 && i != processNum - 1) {
+                fprintf(stderr, "Error: mislocated output redirection\n");
+                continue;
+            }
+        }
 
         if (ourcmd.arguments[0] == NULL) {
             continue;
         }
 
-		if (processNum > 16)
-		{
-			fprintf(stderr, "Error: too many process arguments\n");
-			continue;
-		}
+        for (int i = 0; i < processNum; ++i) {
+            if (argumentNums[i] > 16) {
+                fprintf(stderr, "Error: too many process arguments\n");
+                continue;
+            }
+        }
 
         /* Builtin command */
         if (!strcmp(ourcmd.arguments[0], "exit")) {
@@ -145,3 +229,4 @@ int main(void)
 
     return EXIT_SUCCESS;
 }
+
